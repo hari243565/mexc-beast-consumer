@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import os, asyncio, json, time, random
+import websockets
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
+
+URL = "wss://wbs-api.mexc.com/ws"
+SYMBOL = os.environ.get("MEXC_SYMBOL", "BTC_USDT")
+SYM_UP = SYMBOL.replace("_","").upper()
+OUT_DIR = "/opt/mexc/ingest"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+async def consumer_loop():
+    attempt = 0
+    while True:
+        try:
+            async with websockets.connect(URL, ping_interval=None, ping_timeout=None, max_size=None) as ws:
+                attempt = 0
+                sub_msg = {
+                    "method":"SUBSCRIPTION",
+                    "params":[f"spot@public.deals.v3.api@{SYM_UP}"],
+                    "id": random.randint(1,1_000_000)
+                }
+                await ws.send(json.dumps(sub_msg))
+                print("✅ Sent subscription:", sub_msg, flush=True)
+
+                while True:
+                    msg = await ws.recv()
+                    # handle server ping frames
+                    if isinstance(msg, str):
+                        if "ping" in msg:
+                            try:
+                                payload = json.loads(msg)
+                                pong = {"pong": payload.get("ping", int(time.time()*1000))}
+                                await ws.send(json.dumps(pong))
+                                print("↩️  Replied pong:", pong, flush=True)
+                                continue
+                            except Exception:
+                                pass
+                    elif isinstance(msg, bytes) and msg.startswith(b"ping"):
+                        await ws.send(msg.replace(b"ping", b"pong"))
+                        print("↩️  Replied binary pong", flush=True)
+                        continue
+
+                    # normal message write
+                    with open(f"{OUT_DIR}/feed-{int(time.time())%10}.ndjson", "a") as fh:
+                        if isinstance(msg, bytes):
+                            fh.write(msg.hex()+"\n")
+                        else:
+                            fh.write(msg+"\n")
+                    print("Wrote frame", flush=True)
+
+        except (ConnectionClosedError, ConnectionClosedOK) as e:
+            print(f"⚠️ Closed (code={getattr(e,'code',None)} reason={getattr(e,'reason',None)})", flush=True)
+            backoff = min(60, 1.0*(2**attempt))
+            await asyncio.sleep(backoff + random.uniform(0,1))
+            attempt += 1
+        except Exception as e:
+            print("⚠️ Unexpected:", e, flush=True)
+            await asyncio.sleep(2)
+            attempt += 1
+
+if __name__ == "__main__":
+    asyncio.run(consumer_loop())

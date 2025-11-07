@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+import os, sys, time, random, json
+from collections import deque
+import asyncio
+
+# ensure proto_gen is importable
+sys.path.insert(0, '/opt/mexc/consumer/proto_gen')
+
+from google.protobuf import json_format
+import PushDataV3ApiWrapper_pb2
+
+import websockets
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
+
+URL = "wss://wbs-api.mexc.com/ws"
+SYMBOL = os.environ.get("MEXC_SYMBOL", "BTC_USDT")
+CHAN = f"spot@public.aggre.deals.v3.api.pb@100ms@{SYMBOL.replace('_','').upper()}"
+OUT_DIR = "/opt/mexc/ingest"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+# buffers
+json_buffer = deque()
+PROTO_FLUSH_EVERY = 20
+
+def flush_json():
+    if not json_buffer:
+        return
+    fname = os.path.join(OUT_DIR, f"feed-decoded-{int(time.time())%10}.ndjson")
+    with open(fname, "a") as fh:
+        while json_buffer:
+            fh.write(json.dumps(json_buffer.popleft()) + "\n")
+    print("Flushed decoded JSON ->", fname, flush=True)
+
+async def run():
+    attempt = 0
+    while True:
+        try:
+            async with websockets.connect(URL, ping_interval=25, ping_timeout=10, max_size=None) as ws:
+                print("CONNECTED", flush=True)
+                sub = {"method":"SUBSCRIPTION","params":[CHAN],"id": random.randint(1,1_000_000)}
+                await ws.send(json.dumps(sub))
+                print("✅ Sent subscription:", sub, flush=True)
+
+                idx = 0
+                last_flush = time.time()
+                while True:
+                    msg = await ws.recv()
+                    # If bytes: decode wrapper
+                    if isinstance(msg, bytes):
+                        try:
+                            wrapper = PushDataV3ApiWrapper_pb2.PushDataV3ApiWrapper()
+                            wrapper.ParseFromString(msg)
+                            # wrapper may contain many possible fields; handle the aggre deals path:
+                            obj = None
+                            if wrapper.HasField('public_aggre_deals'):
+                                obj = wrapper.public_aggre_deals
+                                # build high-level JSON
+                                out = {
+                                    "channel": wrapper.channel if hasattr(wrapper, "channel") else str(CHAN),
+                                    "symbol": wrapper.symbol if hasattr(wrapper, "symbol") else SYMBOL.replace('_',''),
+                                    "sendTime": str(getattr(wrapper, "sendTime", "")),
+                                    "publicAggreDeals": json_format.MessageToDict(obj, preserving_proto_field_name=True)
+                                }
+                                json_buffer.append(out)
+                                print("Decoded proto -> buffered JSON", flush=True)
+                            else:
+                                # fallback: try to export entire wrapper as dict
+                                out_full = json_format.MessageToDict(wrapper, preserving_proto_field_name=True)
+                                json_buffer.append(out_full)
+                                print("Decoded wrapper -> buffered full JSON", flush=True)
+                        except Exception as e:
+                            # if decode fails, keep raw
+                            fname = os.path.join(OUT_DIR, f"feed-proto-raw-{idx%10}.bin")
+                            with open(fname, "ab") as fh:
+                                fh.write(msg)
+                            print("Proto undecoded -> buffered raw", e, flush=True)
+                    else:
+                        # --- FIX: correct field name ---
+                        if hasattr(wrapper, "publicAggreDeals") and wrapper.publicAggreDeals.deals:
+                            obj = wrapper.publicAggreDeals
+                            out = {
+                                "channel": getattr(wrapper, "channel", str(CHAN)),
+                                "symbol": getattr(wrapper, "symbol", SYMBOL.replace("_","")),
+                                "sendTime": str(getattr(wrapper, "sendTime", "")),
+                                "deals": json_format.MessageToDict(obj, preserving_proto_field_name=True).get("deals", [])
+                            }
+                            json_buffer.append(out)
+                            print("Decoded proto -> buffered JSON", flush=True)
+                            continue
+                        # --- END FIX ---
+                        # text messages: control packets / confirmations
+                        try:
+                            j = json.loads(msg)
+                            print("TXT MSG:", j, flush=True)
+                        except Exception:
+                            print("UNK TEXT MSG", str(msg)[:200], flush=True)
+
+                    idx += 1
+                    # periodic flush
+                    if idx % PROTO_FLUSH_EVERY == 0 or (time.time() - last_flush) > 3:
+                        flush_json()
+                        last_flush = time.time()
+
+        except (ConnectionClosedOK, ConnectionClosedError) as e:
+            print("⚠️ Websocket closed:", e, flush=True)
+            flush_json()
+            attempt += 1
+            await asyncio.sleep(min(60, 2**attempt) + random.uniform(0,1))
+        except Exception as e:
+            print("⚠️ Consumer error:", e, flush=True)
+            flush_json()
+            attempt += 1
+            await asyncio.sleep(min(60, 2**attempt) + random.uniform(0,1))
+
+if __name__ == "__main__":
+    asyncio.run(run())

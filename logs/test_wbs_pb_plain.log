@@ -1,0 +1,4 @@
+CONNECT OK 0.1347663402557373
+SENT {'method': 'SUBSCRIPTION', 'params': ['spot@public.deals.v3.api.pb@BTCUSDT'], 'id': 28643}
+MSG 0.21757125854492188 <class 'str'> {"id":28643,"code":0,"msg":"Not Subscribed successfully! [spot@public.deals.v3.api.pb@BTCUSDT].  Reason： Blocked! "}
+RECV TIMEOUT 30.221148252487183

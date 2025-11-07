@@ -1,0 +1,339 @@
+{
+  "heur": "raw",
+  "module": "PushDataV3ApiWrapper_pb2",
+  "class": "PushDataV3ApiWrapper",
+  "payload_sample": {
+    "channel": "spot@public.aggre.deals.v3.api.pb@100ms@BTCUSDT",
+    "symbol": "BTCUSDT",
+    "sendTime": "1762516470156",
+    "publicAggreDeals": {
+      "deals": [
+        {
+          "price": "101820.98",
+          "quantity": "0.00317142",
+          "tradeType": 2,
+          "time": "1762451978275"
+        },
+        {
+          "price": "101820.98",
+          "quantity": "0.00300063",
+          "tradeType": 2,
+          "time": "1762451978277"
+        },
+        {
+          "price": "101820.98",
+          "quantity": "0.00368378",
+          "tradeType": 1,
+          "time": "1762451978280"
+        },
+        {
+          "price": "101820.98",
+          "quantity": "0.00329576",
+          "tradeType": 1,
+          "time": "1762451978453"
+        },
+        {
+          "price": "101805.6",
+          "quantity": "0.02366671",
+          "tradeType": 1,
+          "time": "1762451980143"
+        },
+        {
+          "price": "101807.72",
+          "quantity": "0.03511321",
+          "tradeType": 1,
+          "time": "1762451980143"
+        },
+        {
+          "price": "101733.62",
+          "quantity": "0.03912363",
+          "tradeType": 2,
+          "time": "1762452046346"
+        },
+        {
+          "price": "101733.62",
+          "quantity": "0.39671747",
+          "tradeType": 1,
+          "time": "1762452046346"
+        },
+        {
+          "price": "101706.09",
+          "quantity": "0.00325221",
+          "tradeType": 1,
+          "time": "1762452050277"
+        },
+        {
+          "price": "101706.09",
+          "quantity": "0.01667675",
+          "tradeType": 2,
+          "time": "1762452050277"
+        },
+        {
+          "price": "101706.08",
+          "quantity": "0.01413072",
+          "tradeType": 1,
+          "time": "1762452050277"
+        },
+        {
+          "price": "101706.09",
+          "quantity": "0.02269465",
+          "tradeType": 1,
+          "time": "1762452050277"
+        },
+        {
+          "price": "101706.09",
+          "quantity": "0.01112177",
+          "tradeType": 2,
+          "time": "1762452050277"
+        },
+        {
+          "price": "101706.08",
+          "quantity": "0.0104274",
+          "tradeType": 2,
+          "time": "1762452050279"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.13783151",
+          "tradeType": 1,
+          "time": "1762452146346"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.08423495",
+          "tradeType": 2,
+          "time": "1762452146348"
+        },
+        {
+          "price": "101701.52",
+          "quantity": "0.00182267",
+          "tradeType": 1,
+          "time": "1762452148348"
+        },
+        {
+          "price": "101701.52",
+          "quantity": "0.00005945",
+          "tradeType": 1,
+          "time": "1762452148348"
+        },
+        {
+          "price": "101701.52",
+          "quantity": "0.0002739",
+          "tradeType": 2,
+          "time": "1762452148351"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.00080823",
+          "tradeType": 1,
+          "time": "1762452150276"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.00209278",
+          "tradeType": 2,
+          "time": "1762452150276"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.00034578",
+          "tradeType": 1,
+          "time": "1762452150277"
+        },
+        {
+          "price": "101701.51",
+          "quantity": "0.00106514",
+          "tradeType": 1,
+          "time": "1762452150278"
+        },
+        {
+          "price": "101485.61",
+          "quantity": "0.2403779",
+          "tradeType": 1,
+          "time": "1762452351775"
+        },
+        {
+          "price": "101485.61",
+          "quantity": "0.14186721",
+          "tradeType": 2,
+          "time": "1762452351776"
+        },
+        {
+          "price": "101485.61",
+          "quantity": "0.14580764",
+          "tradeType": 1,
+          "time": "1762452351776"
+        },
+        {
+          "price": "101485.66",
+          "quantity": "0.01698701",
+          "tradeType": 2,
+          "time": "1762452352776"
+        },
+        {
+          "price": "101485.64",
+          "quantity": "0.02183706",
+          "tradeType": 2,
+          "time": "1762452352777"
+        },
+        {
+          "price": "101485.64",
+          "quantity": "0.01407697",
+          "tradeType": 2,
+          "time": "1762452352777"
+        },
+        {
+          "price": "101485.66",
+          "quantity": "0.00122433",
+          "tradeType": 1,
+          "time": "1762452352778"
+        },
+        {
+          "price": "101485.66",
+          "quantity": "0.00073933",
+          "tradeType": 2,
+          "time": "1762452352778"
+        },
+        {
+          "price": "101485.65",
+          "quantity": "0.06007325",
+          "tradeType": 2,
+          "time": "1762452353276"
+        },
+        {
+          "price": "101485.65",
+          "quantity": "0.90093329",
+          "tradeType": 1,
+          "time": "1762452353277"
+        },
+        {
+          "price": "101474.93",
+          "quantity": "0.03380393",
+          "tradeType": 1,
+          "time": "1762452354276"
+        },
+        {
+          "price": "101474.92",
+          "quantity": "0.01300879",
+          "tradeType": 2,
+          "time": "1762452354277"
+        },
+        {
+          "price": "101474.92",
+          "quantity": "0.09878875",
+          "tradeType": 1,
+          "time": "1762452354277"
+        },
+        {
+          "price": "101443.23",
+          "quantity": "0.00045343",
+          "tradeType": 2,
+          "time": "1762452360280"
+        },
+        {
+          "price": "101443.23",
+          "quantity": "0.00005729",
+          "tradeType": 1,
+          "time": "1762452360285"
+        },
+        {
+          "price": "101443.25",
+          "quantity": "0.0003755",
+          "tradeType": 2,
+          "time": "1762452360297"
+        },
+        {
+          "price": "101443.25",
+          "quantity": "0.00056383",
+          "tradeType": 2,
+          "time": "1762452360345"
+        },
+        {
+          "price": "101345.88",
+          "quantity": "0.00004395",
+          "tradeType": 1,
+          "time": "1762452730563"
+        },
+        {
+          "price": "101991.17",
+          "quantity": "0.00357993",
+          "tradeType": 2,
+          "time": "1762500078275"
+        },
+        {
+          "price": "101991.17",
+          "quantity": "0.00230558",
+          "tradeType": 1,
+          "time": "1762500078277"
+        },
+        {
+          "price": "101988.01",
+          "quantity": "0.21545983",
+          "tradeType": 1,
+          "time": "1762500080275"
+        },
+        {
+          "price": "101988.01",
+          "quantity": "0.11838982",
+          "tradeType": 1,
+          "time": "1762500080276"
+        },
+        {
+          "price": "100504.45",
+          "quantity": "0.38487565",
+          "tradeType": 2,
+          "time": "1762516466275"
+        },
+        {
+          "price": "100504.45",
+          "quantity": "0.58158376",
+          "tradeType": 2,
+          "time": "1762516466275"
+        },
+        {
+          "price": "100504.49",
+          "quantity": "0.47895344",
+          "tradeType": 1,
+          "time": "1762516466276"
+        },
+        {
+          "price": "100504.49",
+          "quantity": "0.34211301",
+          "tradeType": 1,
+          "time": "1762516466276"
+        },
+        {
+          "price": "100504.45",
+          "quantity": "0.51316355",
+          "tradeType": 1,
+          "time": "1762516466277"
+        },
+        {
+          "price": "100504.36",
+          "quantity": "0.06890265",
+          "tradeType": 2,
+          "time": "1762516466777"
+        },
+        {
+          "price": "100504.39",
+          "quantity": "0.17989323",
+          "tradeType": 2,
+          "time": "1762516466778"
+        },
+        {
+          "price": "100491.25",
+          "quantity": "0.00000995",
+          "tradeType": 1,
+          "time": "1762516467195"
+        },
+        {
+          "price": "100483.54",
+          "quantity": "0.01575103",
+          "tradeType": 1,
+          "time": "1762516470061"
+        }
+      ],
+      "eventType": "spot@public.aggre.deals.v3.api.pb@100ms"
+    }
+  }
+}

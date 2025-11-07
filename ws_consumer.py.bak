@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import os, asyncio, json
+import websockets
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
+
+URL = "wss://wbs-api.mexc.com/ws"
+SYMBOL = os.environ.get("MEXC_SYMBOL", "BTC_USDT")  # local env can override
+SYM_UP = SYMBOL.replace('_','').upper()              # BTC_USDT -> BTCUSDT
+OUT_DIR = "/opt/mexc/ingest"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+async def handle_message(msg, idx):
+    # If msg is bytes -> write binary (likely protobuf). If str -> write JSON.
+    if isinstance(msg, bytes):
+        fname = f"{OUT_DIR}/feed-proto-{idx%10}.bin"
+        with open(fname, "ab") as fh:
+            fh.write(msg)
+        print("Wrote binary frame to", fname, flush=True)
+    else:
+        # Ensure it's valid JSON line before write
+        try:
+            j = json.loads(msg)
+        except Exception:
+            # not JSON, save raw
+            fname = f"{OUT_DIR}/feed-raw-{idx%10}.ndjson"
+            with open(fname, "a") as fh:
+                fh.write(msg + "\n")
+            print("Wrote raw text frame to", fname, flush=True)
+            return
+        # normal JSON path
+        fname = f"{OUT_DIR}/feed-{idx%10}.ndjson"
+        with open(fname, "a") as fh:
+            fh.write(json.dumps(j) + "\n")
+        print("Wrote JSON to", fname, flush=True)
+
+async def run():
+    idx = 0
+    while True:
+        try:
+            async with websockets.connect(URL, ping_interval=5, ping_timeout=10, max_size=None) as ws:
+                # send subscription in v3 format
+                sub_msg = {
+                    "method": "SUBSCRIPTION",
+                    "params": [f"spot@public.deals.v3.api@{SYM_UP}"],
+                    "id": 1
+                }
+                await ws.send(json.dumps(sub_msg))
+                print("✅ Sent subscription:", sub_msg, flush=True)
+
+                while True:
+                    msg = await ws.recv()
+                    await handle_message(msg, idx)
+                    idx += 1
+
+        except (ConnectionClosedOK, ConnectionClosedError) as e:
+            print("⚠️ Websocket closed:", e, flush=True)
+            await asyncio.sleep(2)
+        except Exception as e:
+            print("⚠️ Consumer error:", e, flush=True)
+            await asyncio.sleep(3)
+
+if __name__ == "__main__":
+    asyncio.run(run())

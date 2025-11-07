@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""
+Hardened MEXC WS consumer:
+- explicit ping/pong handling
+- exponential backoff + jitter
+- buffered writes to files (flush once per N messages)
+- logs close codes & timestamps for telemetry
+"""
+import os, asyncio, json, time, random, sys
+from collections import deque
+
+import websockets
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, InvalidHandshake
+
+URL = "wss://wbs-api.mexc.com/ws"
+SYMBOL = os.environ.get("MEXC_SYMBOL", "BTC_USDT")
+SYM_UP = SYMBOL.replace("_","").upper()  # BTC_USDT -> BTCUSDT
+OUT_DIR = "/opt/mexc/ingest"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+# buffering params
+BUFFER_FLUSH_EVERY = 20  # flush to disk every N messages
+MAX_BUFFER_SIZE = 1000
+
+# ping/pong params
+PING_INTERVAL = 10.0   # seconds between pings we send
+PONG_TIMEOUT = 5.0     # seconds to wait for pong
+
+# backoff params
+BACKOFF_BASE = 1.0
+BACKOFF_MAX = 60.0
+
+# simple in-memory buffers
+json_buffer = deque()
+raw_buffer = deque()
+proto_buffer = deque()
+
+def flush_buffers():
+    """Flush available buffers to disk (non-blocking caller)."""
+    # JSON lines
+    if json_buffer:
+        fname = os.path.join(OUT_DIR, f"feed-{int(time.time())%10}.ndjson")
+        with open(fname, "a") as fh:
+            while json_buffer:
+                fh.write(json_buffer.popleft() + "\n")
+        print(f"Flushed JSON -> {fname}", flush=True)
+    if raw_buffer:
+        fname = os.path.join(OUT_DIR, f"feed-raw-{int(time.time())%10}.ndjson")
+        with open(fname, "a") as fh:
+            while raw_buffer:
+                fh.write(raw_buffer.popleft() + "\n")
+        print(f"Flushed RAW -> {fname}", flush=True)
+    if proto_buffer:
+        fname = os.path.join(OUT_DIR, f"feed-proto-{int(time.time())%10}.bin")
+        with open(fname, "ab") as fh:
+            while proto_buffer:
+                fh.write(proto_buffer.popleft())
+        print(f"Flushed PROTO -> {fname}", flush=True)
+
+async def send_and_wait_pong(ws):
+    """Send a ping and wait for pong within PONG_TIMEOUT."""
+    try:
+        waiter = await ws.ping()
+        await asyncio.wait_for(waiter, timeout=PONG_TIMEOUT)
+        return True
+    except Exception:
+        return False
+
+async def consumer_loop():
+    attempt = 0
+    while True:
+        backoff = min(BACKOFF_MAX, BACKOFF_BASE * (2 ** attempt))
+        jitter = random.uniform(0, 1.0)
+        try:
+            async with websockets.connect(URL, ping_interval=None, ping_timeout=None, max_size=None) as ws:
+                attempt = 0
+                print(f"CONNECTED at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}", flush=True)
+
+                # subscribe (rotate id for each connect)
+                sub_msg = {"method":"SUBSCRIPTION", "params":[f"spot@public.deals.v3.api@{SYM_UP}"], "id": random.randint(1,1_000_000)}
+                await ws.send(json.dumps(sub_msg))
+                print("✅ Sent subscription:", sub_msg, flush=True)
+
+                # start a background ping task
+                async def pinger():
+                    while True:
+                        ok = await send_and_wait_pong(ws)
+                        if not ok:
+                            print("⚠️ Pong timeout — will close connection", flush=True)
+                            await ws.close()
+                            return
+                        await asyncio.sleep(PING_INTERVAL)
+
+                ping_task = asyncio.create_task(pinger())
+
+                idx = 0
+                last_flush = time.time()
+                while True:
+                    msg = await ws.recv()  # may be bytes or str
+                    if isinstance(msg, bytes):
+                        proto_buffer.append(msg)
+                        print(f"Buffered binary frame idx={idx%100}", flush=True)
+                    else:
+                        # try decode JSON
+                        try:
+                            js = json.loads(msg)
+                            json_buffer.append(json.dumps(js))
+                            print(f"Buffered JSON idx={idx%100}", flush=True)
+                        except Exception:
+                            raw_buffer.append(msg.encode("utf-8"))
+                            print(f"Buffered raw text idx={idx%100}", flush=True)
+                    idx += 1
+
+                    # flush periodically
+                    if idx % BUFFER_FLUSH_EVERY == 0 or (time.time() - last_flush) > 5:
+                        flush_buffers()
+                        last_flush = time.time()
+
+        except (ConnectionClosedOK, ConnectionClosedError) as e:
+            # log close code and reason if available
+            code = getattr(e, 'code', None)
+            reason = getattr(e, 'reason', None)
+            print(f"⚠️ Websocket closed (code={code} reason={reason}) at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}", flush=True)
+            # flush remaining buffers so we don't lose data
+            flush_buffers()
+            attempt += 1
+            # backoff with jitter
+            sleep_for = min(BACKOFF_MAX, backoff + jitter)
+            print(f"Reconnecting after backoff {sleep_for:.1f}s", flush=True)
+            await asyncio.sleep(sleep_for)
+            continue
+        except InvalidHandshake as ih:
+            print(f"Handshake failed: {ih}", flush=True)
+            await asyncio.sleep(5)
+            attempt += 1
+            continue
+        except Exception as e:
+            print("⚠️ Unexpected consumer error:", e, flush=True)
+            flush_buffers()
+            attempt += 1
+            sleep_for = min(BACKOFF_MAX, backoff + jitter)
+            print(f"Sleeping {sleep_for:.1f}s before retry", flush=True)
+            await asyncio.sleep(sleep_for)
+            continue
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(consumer_loop())
+    except KeyboardInterrupt:
+        flush_buffers()
+        print("Exiting on user interrupt", flush=True)

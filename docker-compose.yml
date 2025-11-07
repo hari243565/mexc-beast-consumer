@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+  mexc-ws:
+    # Use the image we built called 'mexc-ws-consumer'
+    image: mexc-ws-consumer
+    # Always restart the container if it crashes
+    restart: always
+    # Give it a clean name
+    container_name: mexc_ws_consumer
+    # This mounts our data folder *inside* the container
+    # to a folder *outside* on the server.
+    # This way, if we delete the container, our data is safe!
+    volumes:
+      - /opt/mexc/ingest:/app/ingest

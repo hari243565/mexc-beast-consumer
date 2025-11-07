@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+import os, asyncio, json, time, random, importlib, sys
+from collections import deque
+
+import websockets
+
+URL = "wss://wbs-api.mexc.com/ws"
+SYMBOL = os.environ.get("MEXC_SYMBOL", "BTC_USDT")
+CHAN = f"spot@public.aggre.deals.v3.api.pb@100ms@{SYMBOL.replace('_','').upper()}"
+OUT_DIR = "/opt/mexc/ingest"
+PROTO_PY_DIR = "/opt/mexc/consumer/proto_gen"
+os.makedirs(OUT_DIR, exist_ok=True)
+sys.path.insert(0, PROTO_PY_DIR)
+
+# load available generated proto modules dynamically
+PROTO_MODULES = []
+for fn in os.listdir(PROTO_PY_DIR):
+    if fn.endswith("_pb2.py"):
+        modname = fn[:-3]
+        try:
+            PROTO_MODULES.append(importlib.import_module(modname))
+        except Exception as e:
+            print("WARN import proto", modname, e, flush=True)
+
+print("Using channel:", CHAN, "proto modules:", [m.__name__ for m in PROTO_MODULES], flush=True)
+
+# buffs
+json_buffer = deque()
+proto_buffer = deque()
+FLUSH_EVERY = 20
+
+def try_decode_bytes(b):
+    """Try decoding bytes with every proto module's message classes. Return dict or None."""
+    for mod in PROTO_MODULES:
+        # inspect module members for message classes (endswith 'Msg' or not)
+        for attr in dir(mod):
+            if attr.endswith("Push") or attr.endswith("Message") or attr.endswith("Response") or attr.endswith("Msg") or attr.endswith("Market"):
+                cls = getattr(mod, attr)
+                try:
+                    inst = cls()
+                    inst.ParseFromString(b)
+                    # convert to dict via json_format
+                    from google.protobuf import json_format
+                    return json_format.MessageToDict(inst, preserving_proto_field_name=True)
+                except Exception:
+                    continue
+    return None
+
+def flush_json():
+    if not json_buffer:
+        return
+    fname = os.path.join(OUT_DIR, f"feed-decoded-{int(time.time())%10}.ndjson")
+    with open(fname, "a") as fh:
+        while json_buffer:
+            fh.write(json.dumps(json_buffer.popleft()) + "\n")
+    print("Flushed decoded JSON ->", fname, flush=True)
+
+def flush_proto_raw():
+    if not proto_buffer:
+        return
+    fname = os.path.join(OUT_DIR, f"feed-proto-raw-{int(time.time())%10}.bin")
+    with open(fname, "ab") as fh:
+        while proto_buffer:
+            fh.write(proto_buffer.popleft())
+    print("Flushed raw proto ->", fname, flush=True)
+
+async def run():
+    attempt = 0
+    while True:
+        try:
+            async with websockets.connect(URL, ping_interval=25, ping_timeout=10, max_size=None) as ws:
+                attempt = 0
+                sub = {"method":"SUBSCRIPTION","params":[CHAN],"id":random.randint(1,1_000_000)}
+                await ws.send(json.dumps(sub))
+                print("✅ Sent subscription:", sub, flush=True)
+
+                idx = 0
+                last_flush = time.time()
+                while True:
+                    msg = await ws.recv()
+                    # bytes => protobuf; try decode
+                    if isinstance(msg, bytes):
+                        proto_buffer.append(msg)
+                        decoded = try_decode_bytes(msg)
+                        if decoded is not None:
+                            json_buffer.append(decoded)
+                            print("Decoded proto -> buffered JSON", flush=True)
+                        else:
+                            print("Proto undecoded -> buffered raw", flush=True)
+                    else:
+                        # some control messages may come as text
+                        try:
+                            j = json.loads(msg)
+                            # some control messages confirm subscribe; print them
+                            print("TXT MSG:", j, flush=True)
+                        except Exception:
+                            print("UNK TEXT MSG", msg[:200], flush=True)
+
+                    idx += 1
+                    if idx % FLUSH_EVERY == 0 or (time.time()-last_flush) > 3:
+                        flush_json()
+                        flush_proto_raw()
+                        last_flush = time.time()
+
+        except Exception as e:
+            print("⚠️ Consumer error:", e, "attempt", attempt, flush=True)
+            flush_json(); flush_proto_raw()
+            attempt += 1
+            await asyncio.sleep(min(60, 2**attempt) + random.uniform(0,1))
+
+if __name__ == "__main__":
+    asyncio.run(run())
