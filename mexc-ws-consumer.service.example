@@ -1,5 +1,5 @@
 [Unit]
-Description=MEXC WebSocket Consumer (pinned)
+Description=MEXC WebSocket Consumer (Queue + Redis)
 After=network.target docker.service
 Requires=docker.service
 
@@ -8,7 +8,7 @@ User=root
 Group=root
 Restart=on-failure
 RestartSec=5
-ExecStart=/usr/bin/docker run --rm   --user 1000:1000   -v /opt/mexc/ingest:/opt/mexc/ingest   -v /opt/mexc/consumer/proto_gen:/opt/mexc/consumer/proto_gen   --name mexc-ws-consumer mexc-ws-consumer:latest
+ExecStart=/usr/bin/docker run --network host --rm   --user 1000:1000   -e REDIS_URL=redis://127.0.0.1:6379/0   -e MEXC_SYMBOL=BTC_USDT   -v /opt/mexc/ingest:/opt/mexc/ingest   -v /opt/mexc/consumer/proto_gen:/opt/mexc/consumer/proto_gen   --name mexc-ws-consumer mexc-ws-consumer-queue:1762596600
 ExecStop=/usr/bin/docker stop mexc-ws-consumer
 
 [Install]

@@ -1,0 +1,7 @@
+# local artifacts
+*.tar
+perf.data*
+out.*
+*.bak
+metrics/
+backups/
