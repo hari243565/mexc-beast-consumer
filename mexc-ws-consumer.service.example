@@ -1,0 +1,15 @@
+[Unit]
+Description=MEXC WebSocket Consumer (pinned)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+User=root
+Group=root
+Restart=on-failure
+RestartSec=5
+ExecStart=/usr/bin/docker run --rm   --user 1000:1000   -v /opt/mexc/ingest:/opt/mexc/ingest   -v /opt/mexc/consumer/proto_gen:/opt/mexc/consumer/proto_gen   --name mexc-ws-consumer mexc-ws-consumer:latest
+ExecStop=/usr/bin/docker stop mexc-ws-consumer
+
+[Install]
+WantedBy=multi-user.target
