@@ -5,3 +5,6 @@ out.*
 *.bak
 metrics/
 backups/
+*.bak
+patch_*
+force_protobuf_source_fix.sh
