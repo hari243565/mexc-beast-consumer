@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+# Relay: Redis -> ClickHouse (self-healing, HFT-grade)
+# OMEGA-BUILD smart-mode enabled: preflight checks, durable buffer, typed mapping, backoff, metrics
+
+import os
+import json
+import time
+import asyncio
+import traceback
+import datetime
+from concurrent.futures import ThreadPoolExecutor
+
+# Config via env (use defaults safe for local Droplet)
+CLICK_HOST = os.getenv("CLICK_HOST", "127.0.0.1")
+CLICK_PORT = int(os.getenv("CLICK_PORT", "9000"))
+CLICK_USER = os.getenv("CLICK_USER", "relay")
+CLICK_PASS = os.getenv("CLICK_PASS", "2310antvb5s")
+DB = os.getenv("CLICK_DB", "mexc")
+TABLE = os.getenv("CLICK_TABLE", "ticks")
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+LIST_KEY = os.getenv("LIST_KEY", "ingest:queue")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "500"))
+FLUSH_MS = float(os.getenv("FLUSH_MS", "200"))  # flush at ~200ms or BATCH_SIZE
+SPILL_DIR = os.getenv("SPILL_DIR", "/opt/mexc/consumer/relay/spill")
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9102"))
+
+# Safety defaults
+if not os.path.isdir(SPILL_DIR):
+    os.makedirs(SPILL_DIR, exist_ok=True)
+
+# Lazy imports (so CLI --help won't break)
+async def import_deps():
+    global aioredis, clickhouse_driver, PrometheusServer, CollectorRegistry, Counter, Gauge
+    import importlib
+    aioredis = importlib.import_module("aioredis")
+    clickhouse_driver = importlib.import_module("clickhouse_driver")
+    from prometheus_client import start_http_server, CollectorRegistry, Counter, Gauge
+    PrometheusServer = start_http_server
+    CollectorRegistry = CollectorRegistry
+    Counter = Counter
+    Gauge = Gauge
+
+# Data mapping: returns a tuple matching the ClickHouse schema
+def msg_to_row(msg: dict):
+    # exchange_ts: milliseconds since epoch
+    ts = int(msg.get("exchange_ts", 0))
+    # tz-aware UTC datetime
+    event_time = datetime.datetime.fromtimestamp(ts / 1000.0, tz=datetime.timezone.utc)
+    return (
+        event_time,
+        int(msg.get("exchange_ts", 0)),
+        int(msg.get("local_ts", 0)),
+        float(msg.get("lag_ms", 0.0)),
+        str(msg.get("symbol", "")),
+        float(msg.get("price", 0.0)),
+        float(msg.get("quantity", 0.0)),
+        int(msg.get("tradeType", 0))
+    )
+
+# Durable spill (append rows to local file when insert fails)
+def spill_rows(rows):
+    fn = os.path.join(SPILL_DIR, f"spill-{int(time.time())}.ndjson")
+    with open(fn, "a", encoding="utf-8") as f:
+        for r in rows:
+            # convert datetime to ISO for storage
+            d = list(r)
+            if isinstance(d[0], datetime.datetime):
+                d[0] = d[0].isoformat()
+            f.write(json.dumps(d, default=str) + "\n")
+    print(f"🔴 spilled {len(rows)} rows to {fn}", flush=True)
+
+# ClickHouse insert (blocking; run in threadpool)
+def clickhouse_insert_blocking(client_cfg, rows):
+    # client_cfg: dict with host, port, user, password, database, secure
+    client = clickhouse_driver.Client(
+        host=client_cfg["host"],
+        port=client_cfg["port"],
+        user=client_cfg["user"],
+        password=client_cfg["password"],
+        database=client_cfg["database"],
+        secure=False,  # plain mode; server is plain in our droplet
+        connect_timeout=5,
+        send_receive_timeout=10
+    )
+    # Query insert
+    client.execute(
+        f"INSERT INTO {client_cfg['database']}.{TABLE} (event_time,exchange_ts,local_ts,lag_ms,symbol,price,quantity,tradeType) VALUES",
+        rows
+    )
+
+# Mapping of exception -> class and action (simple classifier)
+def classify_exception(e):
+    name = type(e).__name__
+    if "timeout" in str(e).lower() or "timed" in str(e).lower():
+        return "TimeoutError"
+    if "connection" in str(e).lower() or "refused" in str(e).lower():
+        return "ConnectionError"
+    if "schema" in str(e).lower() or "type" in str(e).lower() or "tzinfo" in str(e):
+        return "SchemaError"
+    return "Other"
+
+# Async runner
+async def main():
+    await import_deps()
+    # metrics
+    try:
+        PrometheusServer(METRICS_PORT)
+        print(f"📊 Prometheus metrics available at :{METRICS_PORT}", flush=True)
+    except Exception as e:
+        print("⚠ Prometheus start failed:", e, flush=True)
+
+    client_cfg = dict(host=CLICK_HOST, port=CLICK_PORT, user=CLICK_USER, password=CLICK_PASS, database=DB)
+
+    # Connect to Redis
+    backoff = 0.5
+    redis = None
+    while redis is None:
+        try:
+            redis = aioredis.from_url(REDIS_URL, decode_responses=False)
+            # lightweight ping
+            await redis.ping()
+            print("🔌 Connected to Redis", flush=True)
+        except Exception as e:
+            print("⚠ Redis connect failed:", e, flush=True)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 10)
+
+    # Threadpool for blocking clickhouse writes
+    executor = ThreadPoolExecutor(max_workers=2)
+    loop = asyncio.get_event_loop()
+
+    buf = []
+    last_flush = time.time()
+
+    print("🚀 Relay starting main loop", flush=True)
+
+    while True:
+        try:
+            # BRPOP returns (listname, data) or None (timeout)
+            res = await redis.brpop(LIST_KEY, timeout=1)
+            if res:
+                _, payload = res
+                # payload may be bytes; decode if needed
+                if isinstance(payload, (bytes, bytearray)):
+                    try:
+                        payload = payload.decode("utf-8")
+                    except:
+                        payload = payload.decode("latin-1")
+                msg = json.loads(payload)
+                # convert message to row (typed)
+                row = msg_to_row(msg)
+                buf.append(row)
+
+            now = time.time()
+            if buf and ((now - last_flush) * 1000 >= FLUSH_MS or len(buf) >= BATCH_SIZE):
+                rows_to_send = buf[:BATCH_SIZE]
+                buf = buf[BATCH_SIZE:]
+                last_flush = now
+
+                # try insert with retries & classify
+                tries = 0
+                while True:
+                    try:
+                        await loop.run_in_executor(executor, clickhouse_insert_blocking, client_cfg, rows_to_send)
+                        print(f"✅ Inserted {len(rows_to_send)} rows", flush=True)
+                        break
+                    except Exception as exc:
+                        etype = classify_exception(exc)
+                        print(f"❌ Insert failed (type={etype}): {exc}", flush=True)
+                        tries += 1
+                        if etype == "SchemaError":
+                            # dump rows and spill forever (schema mismatch needs human fix)
+                            spill_rows(rows_to_send)
+                            break
+                        elif etype == "ConnectionError" and tries < 6:
+                            await asyncio.sleep(min(5, 0.5 * (2 ** tries)))
+                            continue
+                        else:
+                            # On other errors, spill & break to avoid infinite loop
+                            spill_rows(rows_to_send)
+                            break
+
+        except Exception as e:
+            print("🔥 Main loop exception:", e, flush=True)
+            traceback.print_exc()
+            await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("✋ Relay stopped by user", flush=True)
+    except Exception as e:
+        print("❌ Fatal error (exiting):", e, flush=True)
+        traceback.print_exc()
+        raise
